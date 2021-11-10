@@ -1,0 +1,5 @@
+[MFLOG|0|2021-11-10T20:34:18.084222Z|runtime|81c19282-04dc-4eb5-a2d7-facb642d9f4e]Traceback (most recent call last):
+[MFLOG|0|2021-11-10T20:34:18.087449Z|runtime|fb5a2df0-d0f2-4221-9219-3811e0a173e4]  File "text_extraction.py", line 46, in <module>
+[MFLOG|0|2021-11-10T20:34:18.087943Z|runtime|64cba087-8300-4a8a-bd26-7f0c6948739f]    from transformers import BertConfig, TFBertModel
+[MFLOG|0|2021-11-10T20:34:18.539334Z|runtime|886826df-f08b-4d50-8812-d1fbd314a22b]ModuleNotFoundError: No module named 'transformers'
+[MFLOG|0|2021-11-10T20:34:18.555319Z|runtime|596f454c-7ee4-4f2d-ba1f-25e044a1c8ff]Task failed.
