@@ -39,16 +39,10 @@ We fine-tune a BERT model to perform this task as follows:
 import os
 import re
 import string
-import numpy as np
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers
-from transformers import BertConfig, TFBertModel
 
 from metaflow import FlowSpec, step, conda
 
 max_len = 384
-configuration = BertConfig()  # default parameters and configuration for BERT
 
 class SquadExample:
     """
@@ -154,6 +148,8 @@ def create_squad_examples(raw_data, tokenizer):
 
 
 def create_inputs_targets(squad_examples):
+    import numpy as np
+
     dataset_dict = {
         "input_ids": [],
         "token_type_ids": [],
@@ -182,6 +178,12 @@ Create the Question-Answering Model using BERT and Functional API
 """
 def create_model():
     ## BERT encoder
+    from transformers import TFBertModel
+    import tensorflow as tf
+    from tensorflow import keras
+    from tensorflow.keras import layers
+    import numpy
+
     encoder = TFBertModel.from_pretrained("bert-base-uncased")
 
     ## QA Model
@@ -233,48 +235,6 @@ def normalize_text(text):
     return text
 
 
-class ExactMatch(keras.callbacks.Callback):
-    """
-    Each `SquadExample` object contains the character level offsets for each token
-    in its input paragraph. We use them to get back the span of text corresponding
-    to the tokens between our predicted start and end tokens.
-    All the ground-truth answers are also present in each `SquadExample` object.
-    We calculate the percentage of data points where the span of text obtained
-    from model predictions matches one of the ground-truth answers.
-    """
-
-    def __init__(self, x_eval, y_eval, eval_squad_examples):
-        self.x_eval = x_eval
-        self.y_eval = y_eval
-        self.eval_squad_examples = eval_squad_examples
-
-    def on_epoch_end(self, epoch, logs=None):
-        eval_squad_examples = self.eval_squad_examples
-        pred_start, pred_end = self.model.predict(self.x_eval)
-        count = 0
-        eval_examples_no_skip = [_ for _ in eval_squad_examples if _.skip == False]
-        for idx, (start, end) in enumerate(zip(pred_start, pred_end)):
-            squad_eg = eval_examples_no_skip[idx]
-            offsets = squad_eg.context_token_to_char
-            start = np.argmax(start)
-            end = np.argmax(end)
-            if start >= len(offsets):
-                continue
-            pred_char_start = offsets[start][0]
-            if end < len(offsets):
-                pred_char_end = offsets[end][1]
-                pred_ans = squad_eg.context[pred_char_start:pred_char_end]
-            else:
-                pred_ans = squad_eg.context[pred_char_start:]
-
-            normalized_pred_ans = normalize_text(pred_ans)
-            normalized_true_ans = [normalize_text(_) for _ in squad_eg.all_answers]
-            if normalized_pred_ans in normalized_true_ans:
-                count += 1
-        acc = count / len(self.y_eval[0])
-        print(f"\nepoch={epoch+1}, exact match score={acc:.2f}")
-
-
 class TextExtractionBERT(FlowSpec):
 
     @conda(libraries={"tensorflow": "2.6.0"})
@@ -299,7 +259,7 @@ class TextExtractionBERT(FlowSpec):
 
         self.next(self.setup_tokenizer)
 
-    @conda(libraries={"transformers": "4.11.3", "tokenizers": "0.10.3"})
+    @conda(libraries={"tensorflow": "2.6.0", "transformers": "4.11.3", "tokenizers": "0.10.3"})
     @step
     def setup_tokenizer(self):
         """
@@ -317,10 +277,10 @@ class TextExtractionBERT(FlowSpec):
         # Load the fast tokenizer from saved file
         self.tokenizer = BertWordPieceTokenizer("bert_base_uncased/vocab.txt", lowercase=True)
 
-        self.next(self.create_train_points, self.create_eval_points, self.model_creation)
+        self.next(self.create_train_points, self.create_eval_points)
 
 
-    @conda(libraries={"numpy": "1.21.4"})
+    @conda(libraries={"tokenizers": "0.10.3", "numpy": "1.21.4"})
     @step
     def create_train_points(self):
         import numpy as np
@@ -331,7 +291,7 @@ class TextExtractionBERT(FlowSpec):
         self.next(self.join)
 
 
-    @conda(libraries={"numpy": "1.21.4"})
+    @conda(libraries={"tokenizers": "0.10.3", "numpy": "1.21.4"})
     @step
     def create_eval_points(self):
         import numpy as np
@@ -341,24 +301,13 @@ class TextExtractionBERT(FlowSpec):
         print(f"{len(self.eval_squad_examples)} evaluation points created.")
         self.next(self.join)
 
-
-    @conda(libraries={"tensorflow": "2.6.0", "transformers": "4.11.3"})
-    @step
-    def model_creation(self):
-        from tensorflow import keras
-        from tensorflow.keras import layers
-        from transformers import TFBertModel
-
-        self.model = create_model()
-        self.model.summary()
-        self.next(self.join)
-
-
+    @conda(libraries={"numpy": "1.21.4"})
     @step
     def join(self, inputs):
+        import numpy
+
         self.x_train, self.y_train = inputs.create_train_points.x_train, inputs.create_train_points.y_train
-        self.x_eval, self.y_eval = inputs.create_train_points.x_eval, inputs.create_train_points.y_eval
-        self.model = inputs.model_creation.model
+        self.x_eval, self.y_eval = inputs.create_eval_points.x_eval, inputs.create_eval_points.y_eval
 
         self.next(self.end)
 
@@ -372,8 +321,55 @@ class TextExtractionBERT(FlowSpec):
         import numpy as np
         from tensorflow import keras
 
+
+        class ExactMatch(keras.callbacks.Callback):
+            """
+            Each `SquadExample` object contains the character level offsets for each token
+            in its input paragraph. We use them to get back the span of text corresponding
+            to the tokens between our predicted start and end tokens.
+            All the ground-truth answers are also present in each `SquadExample` object.
+            We calculate the percentage of data points where the span of text obtained
+            from model predictions matches one of the ground-truth answers.
+            """
+
+            def __init__(self, x_eval, y_eval, eval_squad_examples):
+                self.x_eval = x_eval
+                self.y_eval = y_eval
+                self.eval_squad_examples = eval_squad_examples
+
+            def on_epoch_end(self, epoch, logs=None):
+                eval_squad_examples = self.eval_squad_examples
+                pred_start, pred_end = self.model.predict(self.x_eval)
+                count = 0
+                eval_examples_no_skip = [_ for _ in eval_squad_examples if _.skip == False]
+                for idx, (start, end) in enumerate(zip(pred_start, pred_end)):
+                    squad_eg = eval_examples_no_skip[idx]
+                    offsets = squad_eg.context_token_to_char
+                    start = np.argmax(start)
+                    end = np.argmax(end)
+                    if start >= len(offsets):
+                        continue
+                    pred_char_start = offsets[start][0]
+                    if end < len(offsets):
+                        pred_char_end = offsets[end][1]
+                        pred_ans = squad_eg.context[pred_char_start:pred_char_end]
+                    else:
+                        pred_ans = squad_eg.context[pred_char_start:]
+
+                    normalized_pred_ans = normalize_text(pred_ans)
+                    normalized_true_ans = [normalize_text(_) for _ in squad_eg.all_answers]
+                    if normalized_pred_ans in normalized_true_ans:
+                        count += 1
+                acc = count / len(self.y_eval[0])
+                print(f"\nepoch={epoch + 1}, exact match score={acc:.2f}")
+
+
         exact_match_callback = ExactMatch(self.x_eval, self.y_eval, self.eval_squad_examples)
-        self.model.fit(
+
+        model = create_model()
+        model.summary()
+
+        model.fit(
             self.x_train,
             self.y_train,
             epochs=1,  # For demonstration, 3 epochs are recommended
